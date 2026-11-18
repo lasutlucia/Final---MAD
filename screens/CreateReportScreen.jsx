@@ -12,9 +12,9 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
-import { db } from '../firebaseConfig';
+import { auth } from '../firebaseConfig';
+import { addItem } from '../store/dataStore';
 
 const CATEGORIES = [
   'Kartu / Identitas / KTM',
@@ -109,8 +109,9 @@ export default function CreateReportScreen({ navigation, route }) {
 
     setLoading(true);
     try {
-      await addDoc(collection(db, 'lost_and_found'), {
-        type, // 'lost' atau 'found'
+      const currentUser = auth.currentUser || user;
+      await addItem({
+        type,
         title: title.trim(),
         category,
         location: location.trim(),
@@ -118,24 +119,25 @@ export default function CreateReportScreen({ navigation, route }) {
         currentLocation: type === 'found' ? currentLocation.trim() : '',
         description: description.trim(),
         imageUrl: imageUri || '',
-        status: 'active', // 'active' atau 'resolved'
-        userId: user?.uid || 'anonymous',
-        userName: user?.displayName || user?.email?.split('@')[0] || 'Mahasiswa',
-        userEmail: user?.email || '',
-        createdAt: serverTimestamp(),
-        localDateString: new Date().toLocaleDateString('id-ID', {
-          day: 'numeric',
-          month: 'short',
-          year: 'numeric',
-        }),
+        status: 'active',
+        userId: currentUser?.uid || 'user_' + Date.now(),
+        userName:
+          currentUser?.displayName ||
+          currentUser?.email?.split('@')[0] ||
+          'Mahasiswa',
+        userEmail: currentUser?.email || '',
       });
 
-      Alert.alert('Laporan berhasil dikirim', 'Laporan Anda sudah berhasil dilaporkan.', [
-        {
-          text: 'OK',
-          onPress: () => navigation.goBack(),
-        },
-      ]);
+      Alert.alert(
+        'Laporan Berhasil Dipublikasikan',
+        'Laporan barang Anda telah berhasil disimpan dan dapat dilihat oleh seluruh warga kampus.',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.goBack(),
+          },
+        ]
+      );
     } catch (error) {
       Alert.alert(
         'Gagal Menyimpan Laporan',

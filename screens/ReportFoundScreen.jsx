@@ -12,9 +12,9 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
-import { db } from '../firebaseConfig';
+import { auth } from '../firebaseConfig';
+import { addItem } from '../store/dataStore';
 
 const CATEGORIES = [
   'Kartu / Identitas / KTM',
@@ -117,7 +117,8 @@ export default function ReportFoundScreen({ navigation, route }) {
 
     setLoading(true);
     try {
-      await addDoc(collection(db, 'lost_and_found'), {
+      const currentUser = auth.currentUser || user;
+      await addItem({
         type: 'found',
         title: title.trim(),
         category,
@@ -127,21 +128,20 @@ export default function ReportFoundScreen({ navigation, route }) {
         contact: contact.trim(),
         description: description.trim(),
         imageUrl: imageUri || '',
-        status: 'active', // 'active' (belum diambil) atau 'resolved' (sudah dikembalikan)
-        userId: user?.uid || 'anonymous',
-        userName: user?.displayName || user?.email?.split('@')[0] || 'Mahasiswa',
-        userEmail: user?.email || '',
-        createdAt: serverTimestamp(),
-        localDateString: new Date().toLocaleDateString('id-ID', {
-          day: 'numeric',
-          month: 'short',
-          year: 'numeric',
-        }),
+        status: 'active',
+        userId: currentUser?.uid || 'user_' + Date.now(),
+        userName:
+          currentUser?.displayName ||
+          currentUser?.email?.split('@')[0] ||
+          'Mahasiswa',
+        userEmail: currentUser?.email || '',
       });
 
-      Alert.alert('Laporan berhasil dikirim', 'Laporan barang temuan Anda sudah berhasil dilaporkan.', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      Alert.alert(
+        'Laporan Berhasil Dipublikasikan',
+        'Laporan barang temuan Anda telah berhasil disimpan dan dapat dilihat oleh seluruh warga kampus.',
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
+      );
     } catch (error) {
       Alert.alert('Gagal Mengirim Laporan', error.message);
     } finally {

@@ -8,43 +8,45 @@ import {
   Alert,
   Linking,
   Image,
+  TextInput,
   ActivityIndicator,
 } from 'react-native';
-import { doc, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { auth } from '../firebaseConfig';
+import {
+  subscribeComments,
+  addComment,
+  updateItem,
+  deleteItem,
+} from '../store/dataStore';
 
 export default function ItemDetailScreen({ route, navigation }) {
   const initialItem = route.params?.item;
-  const user = route.params?.user;
+  const user = route.params?.user || auth.currentUser;
 
   const [item, setItem] = useState(initialItem);
+  const [comments, setComments] = useState(initialItem?.comments || []);
+  const [commentText, setCommentText] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [sendingComment, setSendingComment] = useState(false);
 
-  // Dengarkan pembaruan real-time dokumen ini
+  const currentUser = auth.currentUser || user;
+  const isOwner = currentUser?.uid && currentUser.uid === item?.userId;
+  const isLost = item?.type === 'lost';
+  const isResolved = item?.status === 'resolved';
+
+  // Berlangganan komentar secara real-time
   useEffect(() => {
     if (!initialItem?.id) return;
 
-    const unsub = onSnapshot(
-      doc(db, 'lost_and_found', initialItem.id),
-      (docSnap) => {
-        if (docSnap.exists()) {
-          setItem({ id: docSnap.id, ...docSnap.data() });
-        }
-      },
-      (err) => {
-        console.warn('Item detail listener error:', err.message);
-      }
-    );
+    const unsub = subscribeComments(initialItem.id, (loadedComments) => {
+      setComments(loadedComments);
+    });
 
     return () => unsub();
   }, [initialItem?.id]);
 
-  const isOwner = user?.uid === item.userId;
-  const isLost = item.type === 'lost';
-  const isResolved = item.status === 'resolved';
-
   const handleContactWhatsApp = () => {
-    if (!item.contact) {
+    if (!item?.contact) {
       Alert.alert('Info Kontak', 'Nomor kontak tidak tersedia.');
       return;
     }
@@ -67,19 +69,23 @@ export default function ItemDetailScreen({ route, navigation }) {
     });
   };
 
-  // Feature 10: Update status barang menjadi ditemukan atau sudah dikembalikan
+  // Fitur Update Status Barang
   const handleToggleStatus = () => {
-    let nextStatus = isResolved ? 'active' : 'resolved';
+    const nextStatus = isResolved ? 'active' : 'resolved';
     let dialogTitle = '';
     let dialogMessage = '';
 
     if (isLost) {
-      dialogTitle = isResolved ? 'Buka Kembali Pencarian?' : 'Barang Sudah Ditemukan?';
+      dialogTitle = isResolved
+        ? 'Buka Kembali Pencarian?'
+        : 'Barang Sudah Ditemukan?';
       dialogMessage = isResolved
         ? 'Status laporan akan diaktifkan kembali menjadi sedang dicari.'
         : 'Status akan diperbarui menjadi SUDAH DITEMUKAN.';
     } else {
-      dialogTitle = isResolved ? 'Buka Kembali Laporan Temuan?' : 'Sudah Dikembalikan ke Pemilik?';
+      dialogTitle = isResolved
+        ? 'Buka Kembali Laporan Temuan?'
+        : 'Sudah Dikembalikan ke Pemilik?';
       dialogMessage = isResolved
         ? 'Status laporan akan diaktifkan kembali menjadi belum diambil.'
         : 'Status akan diperbarui menjadi SUDAH DIKEMBALIKAN KE PEMILIK.';
@@ -92,9 +98,8 @@ export default function ItemDetailScreen({ route, navigation }) {
         onPress: async () => {
           setActionLoading(true);
           try {
-            await updateDoc(doc(db, 'lost_and_found', item.id), {
-              status: nextStatus,
-            });
+            await updateItem(item.id, { status: nextStatus });
+            setItem((prev) => ({ ...prev, status: nextStatus }));
             Alert.alert('Berhasil', 'Status laporan berhasil diperbarui!');
           } catch (error) {
             Alert.alert('Gagal Mengubah Status', error.message);
@@ -106,7 +111,7 @@ export default function ItemDetailScreen({ route, navigation }) {
     ]);
   };
 
-  // Feature 9: Hapus laporan milik sendiri
+  // Fitur Hapus Laporan
   const handleDeleteItem = () => {
     Alert.alert(
       'Hapus Laporan',
@@ -119,8 +124,8 @@ export default function ItemDetailScreen({ route, navigation }) {
           onPress: async () => {
             setActionLoading(true);
             try {
-              await deleteDoc(doc(db, 'lost_and_found', item.id));
-              Alert.alert('Dihapus', 'Laporan telah dihapus.', [
+              await deleteItem(item.id);
+              Alert.alert('Dihapus', 'Laporan telah berhasil dihapus.', [
                 { text: 'OK', onPress: () => navigation.goBack() },
               ]);
             } catch (error) {
@@ -133,16 +138,39 @@ export default function ItemDetailScreen({ route, navigation }) {
     );
   };
 
+  // Fitur Kirim Komentar (Baru)
+  const handleSendComment = async () => {
+    if (!commentText.trim()) return;
+
+    setSendingComment(true);
+    try {
+      await addComment(item.id, commentText.trim());
+      setCommentText('');
+    } catch (e) {
+      Alert.alert('Gagal', 'Tidak dapat mengirim komentar saat ini.');
+    } finally {
+      setSendingComment(false);
+    }
+  };
+
+  if (!item) {
+    return (
+      <View style={styles.loadingContainer}>
+        <Text style={styles.errorText}>Laporan tidak ditemukan.</Text>
+      </View>
+    );
+  }
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Foto Barang (Feature 5) */}
+      {/* Foto Barang */}
       {item.imageUrl ? (
         <View style={styles.imageCard}>
           <Image source={{ uri: item.imageUrl }} style={styles.mainImage} />
         </View>
       ) : null}
 
-      {/* Badges Tipe & Status (Feature 10) */}
+      {/* Badges Tipe & Status */}
       <View style={styles.badgesRow}>
         <View
           style={[
@@ -169,7 +197,9 @@ export default function ItemDetailScreen({ route, navigation }) {
           <Text
             style={[
               styles.statusBadgeText,
-              isResolved ? styles.statusBadgeTextResolved : styles.statusBadgeTextActive,
+              isResolved
+                ? styles.statusBadgeTextResolved
+                : styles.statusBadgeTextActive,
             ]}
           >
             {isResolved
@@ -183,13 +213,13 @@ export default function ItemDetailScreen({ route, navigation }) {
         </View>
       </View>
 
-      {/* Judul & Kategori (Feature 6) */}
+      {/* Judul & Kategori */}
       <Text style={styles.title}>{item.title}</Text>
       <View style={styles.categoryBadge}>
         <Text style={styles.categoryText}>📁 {item.category || 'Umum'}</Text>
       </View>
 
-      {/* Kartu Informasi Lokasi & Tanggal */}
+      {/* Detail Informasi */}
       <View style={styles.card}>
         <Text style={styles.cardHeader}>Detail Informasi</Text>
 
@@ -214,11 +244,13 @@ export default function ItemDetailScreen({ route, navigation }) {
 
         <View style={styles.infoRow}>
           <Text style={styles.infoKey}>📅 Tanggal Laporan:</Text>
-          <Text style={styles.infoVal}>{item.localDateString || 'Hari ini'}</Text>
+          <Text style={styles.infoVal}>
+            {item.localDateString || 'Hari ini'}
+          </Text>
         </View>
       </View>
 
-      {/* Kartu Deskripsi */}
+      {/* Deskripsi */}
       <View style={styles.card}>
         <Text style={styles.cardHeader}>Deskripsi & Ciri-Ciri</Text>
         <Text style={styles.descriptionText}>
@@ -226,7 +258,7 @@ export default function ItemDetailScreen({ route, navigation }) {
         </Text>
       </View>
 
-      {/* Kartu Informasi Pelapor & Tombol Kontak */}
+      {/* Informasi Pelapor & WhatsApp */}
       <View style={styles.card}>
         <Text style={styles.cardHeader}>
           {isLost ? 'Informasi Pemilik Barang' : 'Informasi Penemu Barang'}
@@ -254,7 +286,84 @@ export default function ItemDetailScreen({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* Kontrol Khusus Pemilik Laporan (Feature 9 & 10) */}
+      {/* Fitur Komentar / Diskusi Warga Kampus */}
+      <View style={styles.card}>
+        <View style={styles.commentHeaderRow}>
+          <Text style={styles.cardHeader}>💬 Diskusi & Komentar</Text>
+          <Text style={styles.commentCountBadge}>
+            {comments.length} komentar
+          </Text>
+        </View>
+        <Text style={styles.commentHint}>
+          Bantu berikan info atau koordinasi langsung di sini.
+        </Text>
+
+        {/* Daftar Komentar */}
+        {comments.length === 0 ? (
+          <View style={styles.emptyCommentBox}>
+            <Text style={styles.emptyCommentText}>
+              Belum ada komentar. Berikan informasi pertama untuk membantu!
+            </Text>
+          </View>
+        ) : (
+          comments.map((c) => {
+            const isReporterComment = c.userId === item.userId;
+            const authorInitial = (c.userName || 'U').charAt(0).toUpperCase();
+
+            return (
+              <View key={c.id} style={styles.commentItem}>
+                <View style={styles.commentAvatar}>
+                  <Text style={styles.commentAvatarText}>{authorInitial}</Text>
+                </View>
+
+                <View style={styles.commentBody}>
+                  <View style={styles.commentAuthorRow}>
+                    <Text style={styles.commentAuthorName}>{c.userName}</Text>
+                    {isReporterComment ? (
+                      <View style={styles.reporterBadge}>
+                        <Text style={styles.reporterBadgeText}>
+                          {isLost ? 'Pemilik' : 'Penemu'}
+                        </Text>
+                      </View>
+                    ) : null}
+                    <Text style={styles.commentTime}>{c.dateString || ''}</Text>
+                  </View>
+                  <Text style={styles.commentContent}>{c.text}</Text>
+                </View>
+              </View>
+            );
+          })
+        )}
+
+        {/* Form Tambah Komentar */}
+        <View style={styles.addCommentBox}>
+          <TextInput
+            style={styles.commentInput}
+            placeholder="Tulis info / komentar Anda..."
+            placeholderTextColor="#9ca3af"
+            value={commentText}
+            onChangeText={setCommentText}
+            multiline
+          />
+          <TouchableOpacity
+            style={[
+              styles.sendCommentBtn,
+              (!commentText.trim() || sendingComment) &&
+                styles.sendCommentBtnDisabled,
+            ]}
+            onPress={handleSendComment}
+            disabled={!commentText.trim() || sendingComment}
+          >
+            {sendingComment ? (
+              <ActivityIndicator color="#ffffff" size="small" />
+            ) : (
+              <Text style={styles.sendCommentBtnText}>Kirim</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Kontrol Khusus Pemilik Laporan */}
       {isOwner ? (
         <View style={styles.ownerControlsCard}>
           <Text style={styles.ownerSectionTitle}>Kelola Laporan Milik Anda</Text>
@@ -263,7 +372,7 @@ export default function ItemDetailScreen({ route, navigation }) {
             <ActivityIndicator color="#2563eb" style={styles.loadingMargin} />
           ) : (
             <>
-              {/* Feature 10: Update Status */}
+              {/* Tombol Update Status */}
               <TouchableOpacity
                 style={[
                   styles.resolveButton,
@@ -280,7 +389,7 @@ export default function ItemDetailScreen({ route, navigation }) {
                 </Text>
               </TouchableOpacity>
 
-              {/* Feature 9: Edit Laporan */}
+              {/* Tombol Edit Laporan */}
               <TouchableOpacity
                 style={styles.editButton}
                 onPress={() => navigation.navigate('EditReport', { item })}
@@ -288,7 +397,7 @@ export default function ItemDetailScreen({ route, navigation }) {
                 <Text style={styles.editButtonText}>✏️ Edit Laporan Ini</Text>
               </TouchableOpacity>
 
-              {/* Feature 9: Hapus Laporan */}
+              {/* Tombol Hapus Laporan */}
               <TouchableOpacity
                 style={styles.deleteButton}
                 onPress={handleDeleteItem}
@@ -311,6 +420,16 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
     paddingBottom: 40,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorText: {
+    color: '#64748b',
+    fontSize: 14,
   },
   imageCard: {
     backgroundColor: '#ffffff',
@@ -409,10 +528,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: '#1e293b',
-    marginBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-    paddingBottom: 6,
+    marginBottom: 6,
+    paddingBottom: 4,
   },
   infoRow: {
     flexDirection: 'row',
@@ -450,6 +567,130 @@ const styles = StyleSheet.create({
   whatsappButtonText: {
     color: '#ffffff',
     fontSize: 14,
+    fontWeight: '700',
+  },
+  commentHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    paddingBottom: 6,
+  },
+  commentCountBadge: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2563eb',
+  },
+  commentHint: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  emptyCommentBox: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  emptyCommentText: {
+    fontSize: 12,
+    color: '#94a3b8',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  commentItem: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  commentAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#3b82f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  commentAvatarText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  commentBody: {
+    flex: 1,
+  },
+  commentAuthorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 4,
+  },
+  commentAuthorName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  reporterBadge: {
+    backgroundColor: '#dbeafe',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  reporterBadgeText: {
+    fontSize: 10,
+    color: '#1d4ed8',
+    fontWeight: '700',
+  },
+  commentTime: {
+    fontSize: 11,
+    color: '#94a3b8',
+  },
+  commentContent: {
+    fontSize: 13,
+    color: '#334155',
+    lineHeight: 18,
+  },
+  addCommentBox: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    alignItems: 'flex-end',
+  },
+  commentInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+    backgroundColor: '#f8fafc',
+    color: '#1e293b',
+    maxHeight: 80,
+  },
+  sendCommentBtn: {
+    backgroundColor: '#2563eb',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendCommentBtnDisabled: {
+    backgroundColor: '#93c5fd',
+  },
+  sendCommentBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
     fontWeight: '700',
   },
   ownerControlsCard: {

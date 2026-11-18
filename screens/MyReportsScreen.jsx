@@ -9,75 +9,49 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import {
-  collection,
-  query,
-  where,
-  onSnapshot,
-  doc,
-  updateDoc,
-  deleteDoc,
-} from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { auth } from '../firebaseConfig';
+import { subscribeItems, updateItem, deleteItem } from '../store/dataStore';
 
 export default function MyReportsScreen({ user: userProp, route, navigation }) {
-  const user = userProp || route?.params?.user;
-  const [items, setItems] = useState([]);
+  const currentUser = auth.currentUser || userProp || route?.params?.user;
+  const [allItems, setAllItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState('all'); // 'all' | 'lost' | 'found'
 
   useEffect(() => {
-    if (!user?.uid) {
+    const unsub = subscribeItems((list) => {
+      setAllItems(list);
       setLoading(false);
-      return;
-    }
+    });
 
-    let unsubscribe = () => {};
-    try {
-      const q = query(
-        collection(db, 'lost_and_found'),
-        where('userId', '==', user.uid)
-      );
+    return () => unsub();
+  }, []);
 
-      unsubscribe = onSnapshot(
-        q,
-        (snapshot) => {
-          const list = [];
-          snapshot.forEach((d) => {
-            list.push({ id: d.id, ...d.data() });
-          });
-          setItems(list);
-          setLoading(false);
-        },
-        (error) => {
-          console.warn('MyReports fetch error:', error.message);
-          setLoading(false);
-        }
-      );
-    } catch (e) {
-      console.warn('MyReports error:', e);
-      setLoading(false);
-    }
-
-    return () => unsubscribe();
-  }, [user]);
+  // Filter laporan milik akun pengguna yang sedang login
+  const items = allItems.filter(
+    (item) => item.userId === currentUser?.uid
+  );
 
   // Toggle status barang (Feature 10)
   const handleToggleStatus = (item) => {
     const isLost = item.type === 'lost';
     const isCurrentlyResolved = item.status === 'resolved';
 
-    let nextStatus = isCurrentlyResolved ? 'active' : 'resolved';
+    const nextStatus = isCurrentlyResolved ? 'active' : 'resolved';
     let dialogTitle = '';
     let dialogMessage = '';
 
     if (isLost) {
-      dialogTitle = isCurrentlyResolved ? 'Buka Kembali Pencarian?' : 'Barang Sudah Ditemukan?';
+      dialogTitle = isCurrentlyResolved
+        ? 'Buka Kembali Pencarian?'
+        : 'Barang Sudah Ditemukan?';
       dialogMessage = isCurrentlyResolved
         ? 'Status akan diubah kembali menjadi barang hilang aktif.'
         : 'Selamat! Status akan diubah menjadi sudah ditemukan.';
     } else {
-      dialogTitle = isCurrentlyResolved ? 'Buka Kembali Laporan Temuan?' : 'Sudah Dikembalikan ke Pemilik?';
+      dialogTitle = isCurrentlyResolved
+        ? 'Buka Kembali Laporan Temuan?'
+        : 'Sudah Dikembalikan ke Pemilik?';
       dialogMessage = isCurrentlyResolved
         ? 'Status akan diubah kembali menjadi belum diambil.'
         : 'Status akan diubah menjadi sudah dikembalikan ke pemilik.';
@@ -89,9 +63,7 @@ export default function MyReportsScreen({ user: userProp, route, navigation }) {
         text: 'Ya, Ubah Status',
         onPress: async () => {
           try {
-            await updateDoc(doc(db, 'lost_and_found', item.id), {
-              status: nextStatus,
-            });
+            await updateItem(item.id, { status: nextStatus });
             Alert.alert('Berhasil', 'Status laporan berhasil diperbarui!');
           } catch (error) {
             Alert.alert('Gagal Mengubah Status', error.message);
@@ -109,7 +81,7 @@ export default function MyReportsScreen({ user: userProp, route, navigation }) {
         style: 'destructive',
         onPress: async () => {
           try {
-            await deleteDoc(doc(db, 'lost_and_found', item.id));
+            await deleteItem(item.id);
             Alert.alert('Dihapus', 'Laporan berhasil dihapus.');
           } catch (error) {
             Alert.alert('Gagal Menghapus', error.message);

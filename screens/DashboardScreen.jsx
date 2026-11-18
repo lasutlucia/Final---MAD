@@ -10,87 +10,51 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { signOut } from 'firebase/auth';
-import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
-import { auth, db } from '../firebaseConfig';
-
-const SAMPLE_RECENT = [
-  {
-    id: 'sample-1',
-    type: 'lost',
-    title: 'Kunci Motor Honda Beat Hitam',
-    category: 'Kunci Motor / Rumah',
-    location: 'Parkiran GK1',
-    imageUrl: 'https://images.unsplash.com/photo-1582139329536-e7284fece509?w=600&auto=format&fit=crop&q=60',
-    status: 'active',
-    localDateString: 'Hari ini',
-  },
-  {
-    id: 'sample-2',
-    type: 'found',
-    title: 'KTM BNI atas nama Rina',
-    category: 'Kartu / Identitas / KTM',
-    location: 'Kantin Pusat',
-    imageUrl: 'https://images.unsplash.com/photo-1578916171728-46686eac8d58?w=600&auto=format&fit=crop&q=60',
-    status: 'active',
-    localDateString: 'Kemarin',
-  },
-];
+import { auth } from '../firebaseConfig';
+import { subscribeItems } from '../store/dataStore';
 
 export default function DashboardScreen({ user: userProp, route, navigation }) {
-  const user = userProp || route?.params?.user;
+  const currentUser = auth.currentUser || userProp || route?.params?.user;
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Berlangganan data persisten terpusat (selalu sinkron across user switches)
   useEffect(() => {
-    let unsubscribe = () => {};
-
-    try {
-      const q = query(
-        collection(db, 'lost_and_found'),
-        orderBy('createdAt', 'desc'),
-        limit(20)
-      );
-
-      unsubscribe = onSnapshot(
-        q,
-        (snapshot) => {
-          const list = [];
-          snapshot.forEach((docSnap) => {
-            list.push({ id: docSnap.id, ...docSnap.data() });
-          });
-          setItems(list.length > 0 ? list : SAMPLE_RECENT);
-          setLoading(false);
-        },
-        (error) => {
-          console.warn('Dashboard firestore fallback:', error.message);
-          setItems(SAMPLE_RECENT);
-          setLoading(false);
-        }
-      );
-    } catch (e) {
-      console.warn('Dashboard init error:', e);
-      setItems(SAMPLE_RECENT);
+    const unsub = subscribeItems((all) => {
+      setItems(all);
       setLoading(false);
-    }
+    });
 
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
-  const handleLogout = () => {
-    Alert.alert('Konfirmasi Keluar', 'Apakah Anda yakin ingin keluar dari akun?', [
-      { text: 'Batal', style: 'cancel' },
-      {
-        text: 'Keluar',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await signOut(auth);
-          } catch (error) {
-            Alert.alert('Gagal Keluar', error.message);
-          }
+  // Fitur Pindah Akun / Logout yang langsung bekerja saat diklik
+  const handleSwitchAccount = () => {
+    Alert.alert(
+      'Pindah Akun',
+      'Apakah Anda ingin keluar dari akun saat ini dan masuk dengan akun mahasiswa lain?',
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Pindah Akun',
+          onPress: async () => {
+            try {
+              await signOut(auth);
+            } catch (error) {
+              Alert.alert('Gagal Pindah Akun', error.message);
+            }
+          },
         },
-      },
-    ]);
+      ]
+    );
+  };
+
+  const handleLogoutDirect = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      Alert.alert('Gagal Keluar', error.message);
+    }
   };
 
   const totalCount = items.length;
@@ -98,19 +62,22 @@ export default function DashboardScreen({ user: userProp, route, navigation }) {
   const foundCount = items.filter((i) => i.type === 'found').length;
   const resolvedCount = items.filter((i) => i.status === 'resolved').length;
 
-  const myReports = items.filter((i) => i.userId === user?.uid);
+  const myReports = items.filter((i) => i.userId === currentUser?.uid);
   const myReportsCount = myReports.length;
 
   // Persentase penyelesaian laporan
   const resolutionRate =
     totalCount > 0 ? Math.round((resolvedCount / totalCount) * 100) : 0;
 
-  const displayName = user?.displayName || user?.email?.split('@')[0] || 'Mahasiswa';
+  const displayName =
+    currentUser?.displayName ||
+    currentUser?.email?.split('@')[0] ||
+    'Mahasiswa';
   const avatarLetter = (displayName || 'U').charAt(0).toUpperCase();
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* 1. Header Profil Mahasiswa */}
+      {/* 1. Header Profil Mahasiswa & Tombol Pindah Akun */}
       <View style={styles.userCard}>
         <View style={styles.userCardHeader}>
           <View style={styles.avatar}>
@@ -119,25 +86,41 @@ export default function DashboardScreen({ user: userProp, route, navigation }) {
           <View style={styles.userInfo}>
             <Text style={styles.welcomeLabel}>DASHBOARD MAHASISWA</Text>
             <Text style={styles.userName}>{displayName}</Text>
-            <Text style={styles.userEmail}>{user?.email}</Text>
+            <Text style={styles.userEmail}>{currentUser?.email}</Text>
           </View>
-          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
-            <Text style={styles.logoutBtnText}>Keluar</Text>
+
+          {/* Tombol Pindah Akun Cepat */}
+          <TouchableOpacity
+            style={styles.switchAccountBtn}
+            onPress={handleSwitchAccount}
+          >
+            <Text style={styles.switchAccountBtnText}>🔄 Pindah</Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.userBadgeRow}>
           <View style={styles.statusBadgeActive}>
-            <Text style={styles.statusBadgeText}>🟢 Akun Aktif Terverifikasi</Text>
+            <Text style={styles.statusBadgeText}>
+              🟢 Mahasiswa Aktif
+            </Text>
           </View>
-          <Text style={styles.userUid}>UID: {user?.uid?.slice(0, 8)}...</Text>
+
+          {/* Tombol Logout Tambahan */}
+          <TouchableOpacity
+            style={styles.logoutSmallBtn}
+            onPress={handleLogoutDirect}
+          >
+            <Text style={styles.logoutSmallBtnText}>Keluar Akun</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
       {/* 2. Ringkasan Statistik Kampus (Analytics Metrik) */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>📊 Statistik Kampus</Text>
-        <Text style={styles.sectionSubtitle}>Ringkasan laporan barang hilang & temuan</Text>
+        <Text style={styles.sectionSubtitle}>
+          Data real-time barang hilang & temuan di kampus
+        </Text>
       </View>
 
       <View style={styles.statsGrid}>
@@ -161,7 +144,9 @@ export default function DashboardScreen({ user: userProp, route, navigation }) {
 
         <View style={[styles.statCard, styles.statCardGray]}>
           <Text style={styles.statEmoji}>✅</Text>
-          <Text style={[styles.statNumber, styles.textGray]}>{resolvedCount}</Text>
+          <Text style={[styles.statNumber, styles.textGray]}>
+            {resolvedCount}
+          </Text>
           <Text style={styles.statLabel}>Selesai</Text>
         </View>
       </View>
@@ -173,10 +158,16 @@ export default function DashboardScreen({ user: userProp, route, navigation }) {
           <Text style={styles.progressPercentage}>{resolutionRate}%</Text>
         </View>
         <View style={styles.progressBarTrack}>
-          <View style={[styles.progressBarFill, { width: `${Math.min(resolutionRate, 100)}%` }]} />
+          <View
+            style={[
+              styles.progressBarFill,
+              { width: `${Math.min(resolutionRate, 100)}%` },
+            ]}
+          />
         </View>
         <Text style={styles.progressHint}>
-          {resolvedCount} dari {totalCount} barang telah berhasil dikembalikan ke pemiliknya.
+          {resolvedCount} dari {totalCount} barang telah berhasil dikembalikan ke
+          pemiliknya.
         </Text>
       </View>
 
@@ -202,7 +193,7 @@ export default function DashboardScreen({ user: userProp, route, navigation }) {
         {/* Tombol Lapor Hilang */}
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => navigation.navigate('ReportLost', { user })}
+          onPress={() => navigation.navigate('ReportLost', { user: currentUser })}
         >
           <View style={[styles.menuIconBox, styles.bgRed]}>
             <Text style={styles.menuIcon}>📢</Text>
@@ -214,7 +205,7 @@ export default function DashboardScreen({ user: userProp, route, navigation }) {
         {/* Tombol Lapor Temuan */}
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => navigation.navigate('ReportFound', { user })}
+          onPress={() => navigation.navigate('ReportFound', { user: currentUser })}
         >
           <View style={[styles.menuIconBox, styles.bgGreen]}>
             <Text style={styles.menuIcon}>🎁</Text>
@@ -226,7 +217,7 @@ export default function DashboardScreen({ user: userProp, route, navigation }) {
         {/* Tombol Laporan Saya */}
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => navigation.navigate('MyReports', { user })}
+          onPress={() => navigation.navigate('MyReports', { user: currentUser })}
         >
           <View style={[styles.menuIconBox, styles.bgPurple]}>
             <Text style={styles.menuIcon}>📁</Text>
@@ -249,33 +240,59 @@ export default function DashboardScreen({ user: userProp, route, navigation }) {
       ) : (
         items.slice(0, 3).map((item) => {
           const isLost = item.type === 'lost';
+          const commentNum = item.comments ? item.comments.length : 0;
+
           return (
             <TouchableOpacity
               key={item.id}
               style={styles.recentCard}
-              onPress={() => navigation.navigate('ItemDetail', { item, user })}
+              onPress={() =>
+                navigation.navigate('ItemDetail', {
+                  item,
+                  user: currentUser,
+                })
+              }
             >
               {item.imageUrl ? (
-                <Image source={{ uri: item.imageUrl }} style={styles.recentThumb} />
+                <Image
+                  source={{ uri: item.imageUrl }}
+                  style={styles.recentThumb}
+                />
               ) : (
                 <View style={styles.recentPlaceholder}>
-                  <Text style={styles.recentPlaceholderText}>{isLost ? '🔴' : '🟢'}</Text>
+                  <Text style={styles.recentPlaceholderText}>
+                    {isLost ? '🔴' : '🟢'}
+                  </Text>
                 </View>
               )}
 
               <View style={styles.recentInfo}>
                 <View style={styles.recentBadges}>
-                  <Text style={[styles.miniBadge, isLost ? styles.badgeLost : styles.badgeFound]}>
+                  <Text
+                    style={[
+                      styles.miniBadge,
+                      isLost ? styles.badgeLost : styles.badgeFound,
+                    ]}
+                  >
                     {isLost ? 'HILANG' : 'DITEMUKAN'}
                   </Text>
-                  <Text style={styles.recentDate}>{item.localDateString || 'Baru'}</Text>
+                  <Text style={styles.recentDate}>
+                    {item.localDateString || 'Baru'}
+                  </Text>
                 </View>
                 <Text style={styles.recentTitle} numberOfLines={1}>
                   {item.title}
                 </Text>
-                <Text style={styles.recentLocation} numberOfLines={1}>
-                  📍 {item.location}
-                </Text>
+                <View style={styles.recentMetaRow}>
+                  <Text style={styles.recentLocation} numberOfLines={1}>
+                    📍 {item.location}
+                  </Text>
+                  {commentNum > 0 ? (
+                    <Text style={styles.recentCommentBadge}>
+                      💬 {commentNum}
+                    </Text>
+                  ) : null}
+                </View>
               </View>
             </TouchableOpacity>
           );
@@ -358,16 +375,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#cbd5e1',
   },
-  logoutBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  switchAccountBtn: {
+    backgroundColor: '#f59e0b',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 8,
   },
-  logoutBtnText: {
+  switchAccountBtnText: {
     color: '#ffffff',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   userBadgeRow: {
     flexDirection: 'row',
@@ -388,10 +405,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
-  userUid: {
-    color: '#bfdbfe',
+  logoutSmallBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  logoutSmallBtnText: {
+    color: '#ffffff',
     fontSize: 11,
-    fontFamily: 'monospace',
+    fontWeight: '600',
   },
   sectionHeader: {
     marginBottom: 10,
@@ -532,21 +555,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  bgBlue: {
-    backgroundColor: '#dbeafe',
-  },
-  bgRed: {
-    backgroundColor: '#fee2e2',
-  },
-  bgGreen: {
-    backgroundColor: '#dcfce7',
-  },
-  bgPurple: {
-    backgroundColor: '#ede9fe',
-  },
-  loadingMargin: {
-    marginVertical: 20,
-  },
   menuIcon: {
     fontSize: 20,
   },
@@ -559,6 +567,18 @@ const styles = StyleSheet.create({
   menuDesc: {
     fontSize: 11,
     color: '#64748b',
+  },
+  bgBlue: {
+    backgroundColor: '#dbeafe',
+  },
+  bgRed: {
+    backgroundColor: '#fee2e2',
+  },
+  bgGreen: {
+    backgroundColor: '#dcfce7',
+  },
+  bgPurple: {
+    backgroundColor: '#ede9fe',
   },
   recentSectionHeader: {
     flexDirection: 'row',
@@ -637,9 +657,25 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1e293b',
   },
+  recentMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 2,
+  },
   recentLocation: {
     fontSize: 11,
     color: '#475569',
+    flex: 1,
+  },
+  recentCommentBadge: {
+    fontSize: 11,
+    color: '#2563eb',
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  loadingMargin: {
+    marginVertical: 20,
   },
   helpCard: {
     backgroundColor: '#eff6ff',

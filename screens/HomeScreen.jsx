@@ -9,8 +9,8 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { auth } from '../firebaseConfig';
+import { subscribeItems } from '../store/dataStore';
 
 const CATEGORIES = [
   'Semua Kategori',
@@ -24,7 +24,7 @@ const CATEGORIES = [
 ];
 
 export default function HomeScreen({ user: userProp, route, navigation }) {
-  const user = userProp || route?.params?.user;
+  const currentUser = auth.currentUser || userProp || route?.params?.user;
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -32,35 +32,12 @@ export default function HomeScreen({ user: userProp, route, navigation }) {
   const [selectedCategory, setSelectedCategory] = useState('Semua Kategori');
 
   useEffect(() => {
-    let unsubscribe = () => {};
-
-    try {
-      const q = query(
-        collection(db, 'lost_and_found'),
-        orderBy('createdAt', 'desc')
-      );
-
-      unsubscribe = onSnapshot(
-        q,
-        (snapshot) => {
-          const list = [];
-          snapshot.forEach((docSnap) => {
-            list.push({ id: docSnap.id, ...docSnap.data() });
-          });
-          setItems(list);
-          setLoading(false);
-        },
-        (error) => {
-          console.warn('HomeScreen firestore error:', error.message);
-          setLoading(false);
-        }
-      );
-    } catch (e) {
-      console.warn('HomeScreen init error:', e);
+    const unsub = subscribeItems((all) => {
+      setItems(all);
       setLoading(false);
-    }
+    });
 
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
   const filteredItems = items.filter((item) => {
@@ -223,7 +200,10 @@ export default function HomeScreen({ user: userProp, route, navigation }) {
                 key={item.id}
                 style={[styles.itemCard, isResolved && styles.itemCardResolved]}
                 onPress={() =>
-                  navigation.navigate('ItemDetail', { item, user })
+                  navigation.navigate('ItemDetail', {
+                    item,
+                    user: currentUser,
+                  })
                 }
               >
                 {/* Header Kartu */}
@@ -307,7 +287,14 @@ export default function HomeScreen({ user: userProp, route, navigation }) {
                   <Text style={styles.reporterText}>
                     👤 {item.userName || 'Warga Kampus'} • {item.localDateString || 'Baru'}
                   </Text>
-                  <Text style={styles.detailLink}>Detail & Kontak →</Text>
+                  <View style={styles.footerActionRow}>
+                    {item.comments && item.comments.length > 0 ? (
+                      <Text style={styles.commentBadge}>
+                        💬 {item.comments.length}
+                      </Text>
+                    ) : null}
+                    <Text style={styles.detailLink}>Detail & Kontak →</Text>
+                  </View>
                 </View>
               </TouchableOpacity>
             );
@@ -319,14 +306,14 @@ export default function HomeScreen({ user: userProp, route, navigation }) {
       <View style={styles.fabContainer}>
         <TouchableOpacity
           style={[styles.fabBtn, styles.fabLost]}
-          onPress={() => navigation.navigate('ReportLost', { user })}
+          onPress={() => navigation.navigate('ReportLost', { user: currentUser })}
         >
           <Text style={styles.fabBtnText}>📢 Lapor Hilang</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.fabBtn, styles.fabFound]}
-          onPress={() => navigation.navigate('ReportFound', { user })}
+          onPress={() => navigation.navigate('ReportFound', { user: currentUser })}
         >
           <Text style={styles.fabBtnText}>🎁 Lapor Temuan</Text>
         </TouchableOpacity>
@@ -612,6 +599,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#2563eb',
+  },
+  footerActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  commentBadge: {
+    fontSize: 11,
+    color: '#2563eb',
+    fontWeight: '600',
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
   fabContainer: {
     position: 'absolute',

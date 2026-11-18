@@ -12,9 +12,8 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
-import { db } from '../firebaseConfig';
+import { updateItem, deleteItem } from '../store/dataStore';
 
 const CATEGORIES = [
   'Kartu / Identitas / KTM',
@@ -104,7 +103,7 @@ export default function EditReportScreen({ navigation, route }) {
 
     setLoading(true);
     try {
-      await updateDoc(doc(db, 'lost_and_found', item.id), {
+      await updateItem(item.id, {
         title: title.trim(),
         category,
         location: location.trim(),
@@ -139,9 +138,9 @@ export default function EditReportScreen({ navigation, route }) {
         onPress: async () => {
           setLoading(true);
           try {
-            await deleteDoc(doc(db, 'lost_and_found', item.id));
+            await deleteItem(item.id);
             Alert.alert('Dihapus', 'Laporan berhasil dihapus.', [
-              { text: 'OK', onPress: () => navigation.navigate('Home') },
+              { text: 'OK', onPress: () => navigation.goBack() },
             ]);
           } catch (error) {
             Alert.alert('Gagal Menghapus', error.message);
